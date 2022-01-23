@@ -92,4 +92,73 @@ contract GivRouter is IGivRouter02 {
         // refund dust eth, if any
         if (msg.value > amountETH) TransferHelper.safeTransferETH(msg.sender, msg.value - amountETH);
     }
+
+    // **** REMOVE LIQUIDITY ****
+    function removeLiquidity(
+        address tokenA,
+        address tokenB,
+        uint liquidity,
+        uint amountAMin,
+        uint amountBMin,
+        address to,
+        uint deadline
+    ) public virtual override ensure(deadline) returns (uint amountA, uint amountB) {
+        address pair = GivLibrary.pairFor(factory, tokenA, tokenB);
+        IGivPair(pair).transferFrom(msg.sender, pair, liquidity); // send liquidity to pair
+        (uint amount0, uint amount1) = IGivPair(pair).burn(to);
+        (address token0,) = GivLibrary.sortTokens(tokenA, tokenB);
+        (amountA, amountB) = tokenA == token0 ? (amount0, amount1) : (amount1, amount0);
+        require(amountA >= amountAMin, 'GivRouter: INSUFFICIENT_A_AMOUNT');
+        require(amountB >= amountBMin, 'GivRouter: INSUFFICIENT_B_AMOUNT');
+    }
+    function removeLiquidityETH(
+        address token,
+        uint liquidity,
+        uint amountTokenMin,
+        uint amountETHMin,
+        address to,
+        uint deadline
+    ) public virtual override ensure(deadline) returns (uint amountToken, uint amountETH) {
+        (amountToken, amountETH) = removeLiquidity(
+            token,
+            WETH,
+            liquidity,
+            amountTokenMin,
+            amountETHMin,
+            address(this),
+            deadline
+        );
+        TransferHelper.safeTransfer(token, to, amountToken);
+        IWETH(WETH).withdraw(amountETH);
+        TransferHelper.safeTransferETH(to, amountETH);
+    }
+    function removeLiquidityWithPermit(
+        address tokenA,
+        address tokenB,
+        uint liquidity,
+        uint amountAMin,
+        uint amountBMin,
+        address to,
+        uint deadline,
+        bool approveMax, uint8 v, bytes32 r, bytes32 s
+    ) external virtual override returns (uint amountA, uint amountB) {
+        address pair = GivLibrary.pairFor(factory, tokenA, tokenB);
+        uint value = approveMax ? uint(-1) : liquidity;
+        IGivPair(pair).permit(msg.sender, address(this), value, deadline, v, r, s);
+        (amountA, amountB) = removeLiquidity(tokenA, tokenB, liquidity, amountAMin, amountBMin, to, deadline);
+    }
+    function removeLiquidityETHWithPermit(
+        address token,
+        uint liquidity,
+        uint amountTokenMin,
+        uint amountETHMin,
+        address to,
+        uint deadline,
+        bool approveMax, uint8 v, bytes32 r, bytes32 s
+    ) external virtual override returns (uint amountToken, uint amountETH) {
+        address pair = GivLibrary.pairFor(factory, token, WETH);
+        uint value = approveMax ? uint(-1) : liquidity;
+        IGivPair(pair).permit(msg.sender, address(this), value, deadline, v, r, s);
+        (amountToken, amountETH) = removeLiquidityETH(token, liquidity, amountTokenMin, amountETHMin, to, deadline);
+    }
 }
