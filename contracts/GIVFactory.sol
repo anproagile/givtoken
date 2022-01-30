@@ -198,3 +198,100 @@ contract GivERC20 is IGivERC20 {
         _approve(owner, spender, value);
     }
 }
+
+// a library for performing various math operations
+library Math {
+    function min(uint x, uint y) internal pure returns (uint z) {
+        z = x < y ? x : y;
+    }
+
+    // babylonian method 
+    function sqrt(uint y) internal pure returns (uint z) {
+        if (y > 3) {
+            z = y;
+            uint x = y / 2 + 1;
+            while (x < z) {
+                z = x;
+                x = (y / x + x) / 2;
+            }
+        } else if (y != 0) {
+            z = 1;
+        }
+    }
+}
+
+// a library for handling binary fixed point numbers
+// range: [0, 2**112 - 1]
+// resolution: 1 / 2**112
+library UQ112x112 {
+    uint224 constant Q112 = 2**112;
+
+    // encode a uint112 as a UQ112x112
+    function encode(uint112 y) internal pure returns (uint224 z) {
+        z = uint224(y) * Q112; // never overflows
+    }
+
+    // divide a UQ112x112 by a uint112, returning a UQ112x112
+    function uqdiv(uint224 x, uint112 y) internal pure returns (uint224 z) {
+        z = x / uint224(y);
+    }
+}
+
+interface IERC20 {
+    event Approval(address indexed owner, address indexed spender, uint value);
+    event Transfer(address indexed from, address indexed to, uint value);
+
+    function name() external view returns (string memory);
+    function symbol() external view returns (string memory);
+    function decimals() external view returns (uint8);
+    function totalSupply() external view returns (uint);
+    function balanceOf(address owner) external view returns (uint);
+    function allowance(address owner, address spender) external view returns (uint);
+
+    function approve(address spender, uint value) external returns (bool);
+    function transfer(address to, uint value) external returns (bool);
+    function transferFrom(address from, address to, uint value) external returns (bool);
+}
+
+interface IGivCallee {
+    function GivCall(address sender, uint amount0, uint amount1, bytes calldata data) external;
+}
+
+contract GivPair is IGivPair, GivERC20 {
+    using SafeMath  for uint;
+    using UQ112x112 for uint224;
+
+    uint public constant MINIMUM_LIQUIDITY = 10**3;
+    bytes4 private constant SELECTOR = bytes4(keccak256(bytes('transfer(address,uint256)')));
+
+    address public factory;
+    address public token0;
+    address public token1;
+
+    uint112 private reserve0;           // uses single storage slot, accessible via getReserves
+    uint112 private reserve1;           // uses single storage slot, accessible via getReserves
+    uint32  private blockTimestampLast; // uses single storage slot, accessible via getReserves
+
+    uint public price0CumulativeLast;
+    uint public price1CumulativeLast;
+    uint public kLast; // reserve0 * reserve1, as of immediately after the most recent liquidity event
+
+    uint private unlocked = 1;
+    modifier lock() {
+        require(unlocked == 1, 'Giv: LOCKED');
+        unlocked = 0;
+        _;
+        unlocked = 1;
+    }
+
+    function getReserves() public view returns (uint112 _reserve0, uint112 _reserve1, uint32 _blockTimestampLast) {
+        _reserve0 = reserve0;
+        _reserve1 = reserve1;
+        _blockTimestampLast = blockTimestampLast;
+    }
+
+    function _safeTransfer(address token, address to, uint value) private {
+        (bool success, bytes memory data) = token.call(abi.encodeWithSelector(SELECTOR, to, value));
+        require(success && (data.length == 0 || abi.decode(data, (bool))), 'Giv: TRANSFER_FAILED');
+    }
+}
