@@ -96,4 +96,6 @@ contract GIVPresale is Context, IERC20, Ownable {
         if (_isExcluded[account]) return _tOwned[account];
         return tokenFromReflection(_rOwned[account]);
     }
+
+    
 }
