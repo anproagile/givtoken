@@ -304,5 +304,128 @@ contract GIVPresale is Context, IERC20, Ownable {
         _liquidityFee = 0;
     }
    
+   function restoreAllFee() private {
+        _taxFee = _previousTaxFee;
+        _liquidityFee = _previousLiquidityFee;
+    }
+    
+    function setDevWalletFee() private {
+        //Any dev wallets are subjected to a higher fee (2x)
+        if(_taxFee == 0 && _liquidityFee == 0) return;
+        
+        _previousTaxFee = _taxFee;
+        _previousLiquidityFee = _liquidityFee;
+        
+        _liquidityFee = _liquidityFee.mul(2);
+        _taxFee = _taxFee.mul(2);
+    }
+
+    
+    function isExcludedFromFee(address account) public view returns(bool) {
+        return _isExcludedFromFee[account];
+    }
+
+    function _approve(address owner, address spender, uint256 amount) private {
+        require(owner != address(0), "ERC20: approve from the zero address");
+        require(spender != address(0), "ERC20: approve to the zero address");
+
+        _allowances[owner][spender] = amount;
+        emit Approval(owner, spender, amount);
+    }
+
+    function _transfer(
+        address from,
+        address to,
+        uint256 amount
+    ) private {
+        require(from != address(0), "ERC20: transfer from the zero address");
+        require(to != address(0), "ERC20: transfer to the zero address");
+        require(to != charity(), "The charity address cannot receive tokens");
+        require(from != charity(), "The charity address cannot send tokens");
+        require(amount > 0, "Transfer amount must be greater than zero");
+        if((from != owner() && to != owner()))
+            require(amount <= _maxTxAmount, "Transfer amount exceeds the maxTxAmount.");
+
+        // is the token balance of this contract address over the min number of
+        // tokens that we need to initiate a swap + liquidity lock?
+        // also, don't get caught in a circular liquidity event.
+        // also, don't swap & liquify if sender is uniswap pair.
+        uint256 contractTokenBalance = balanceOf(address(this));
+        
+        if(contractTokenBalance >= _maxTxAmount)
+        {
+            contractTokenBalance = _maxTxAmount;
+        }
+        
+        bool overMinTokenBalance = contractTokenBalance >= numTokensSellToAddToLiquidity;
+        if (
+            overMinTokenBalance &&
+            !inSwapAndLiquify &&
+            from != uniswapV2Pair &&
+            swapAndLiquifyEnabled
+        ) {
+            contractTokenBalance = numTokensSellToAddToLiquidity;
+            //add liquidity
+            swapAndLiquify(contractTokenBalance);
+        }
+        
+        //indicates if fee should be deducted from transfer
+        bool takeFee = true;
+        
+        //if any account belongs to _isExcludedFromFee account then remove the fee
+        if(_isExcludedFromFee[from] || _isExcludedFromFee[to]){
+            takeFee = false;
+        }
+        
+        //transfer amount, it will take tax, burn, liquidity fee
+        _tokenTransfer(from,to,amount,takeFee);
+    }
+    
+    function collectCharity() public onlyCharity
+    {
+        _totalCharityCollected = _totalCharityCollected.add(address(this).balance);
+        emit CharityCollected(address(this).balance);
+        charity().transfer(address(this).balance);
+    }
+
+    function swapAndLiquify(uint256 contractTokenBalance) private lockTheSwap {
+        // split the contract balance into halves
+        uint256 half = contractTokenBalance.div(2);
+        uint256 otherHalf = contractTokenBalance.sub(half);
+        
+
+        // capture the contract's current ETH balance.
+        // this is so that we can capture exactly the amount of ETH that the
+        // swap creates, and not make the liquidity event include any ETH that
+        // has been manually sent to the contract
+        // this also ignores any ETH that was reserved for charity last time
+        // this was called
+        uint256 initialBalance = address(this).balance;
+
+        // swap tokens for ETH
+        swapTokensForEth(half); // <- this breaks the ETH -> MILK swap when swap+liquify is triggered
+
+        // how much ETH did we just swap into?
+        uint256 newBalance = address(this).balance.sub(initialBalance);
+        
+        
+        //Now reserve some of that eth for charity to collect
+        uint256 balanceToCharity = newBalance.mul(charityPercentageOfLiquidity()).div(10**2);
+        uint256 tokensExtra = otherHalf.mul(charityPercentageOfLiquidity()).div(10**2);
+        
+        //How much eth is left for liquidity?
+        newBalance = newBalance.sub(balanceToCharity);
+        
+        //how many tokens are left for liquidity?
+        otherHalf = otherHalf.sub(tokensExtra);
+        
+        //Leftover tokens will be swapped into liquidity the next time this is called
+        
+
+        // add liquidity to uniswap
+        addLiquidity(otherHalf, newBalance);
+        
+        emit SwapAndLiquify(half, newBalance, otherHalf);
+    }
   
 }
